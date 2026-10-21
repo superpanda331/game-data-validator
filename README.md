@@ -46,7 +46,7 @@ python step0_check_env.py
 3. 이 폴더의 `.env.example` 파일을 복사해 이름을 **`.env`** 로 변경
 4. `.env` 안의 `여기에_API_키를_붙여_넣으세요` 부분을 복사한 키로 교체
 
-> ⚠️ `.env`는 비밀번호와 같아요. GitHub에 올리지 마세요 (`.gitignore`에 이미 제외 처리됨).
+> `.env`는 GitHub에 올리지 않기. (`.gitignore`에 이미 제외 처리됨).
 
 ## 실행 순서
 
