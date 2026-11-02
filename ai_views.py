@@ -109,6 +109,15 @@ def to_source(tables, table, excel_row, column):
         → ("StringTable", <그 키가 있는 행>, "ko")
     텍스트 칸이 아니면 그대로 돌려줘요.
     """
+    if column == "아이템_이름" and table in ("DropGroup", "Reward"):
+        item_id = tables[table].loc[excel_row - 2,"item_id"]
+        item = tables["Item"]
+        hits = item.index[item["item_id"] == item_id]
+        if len(hits) == 0:
+            return table, excel_row, "item_id"
+        return to_source(tables, "Item", int(hits[0])+2,"이름")
+        
+
     info = TEXT_COLUMNS.get(table, {}).get(column)
     if info is None:
         return table, excel_row, column

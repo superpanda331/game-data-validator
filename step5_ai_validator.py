@@ -28,6 +28,8 @@ from google.genai import types
 from ai_views import build_views, to_source
 from common import CLEAN_DIR, ERROR_DIR, ROOT, load_all
 
+from ai_calc import add_calc_columns, summary_text
+
 # ── 준비 ─────────────────────────────────────────────────────────────
 DRY_RUN = "--dry" in sys.argv
 CLEAN = "--clean" in sys.argv
@@ -38,7 +40,7 @@ MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
 client = None if DRY_RUN else genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 tables, indexes = load_all(folder)
-views = build_views(tables)                 # AI가 읽기 쉽게 정리한 표 (ai_views.py 참고)
+views = add_calc_columns(build_views(tables))                 # AI가 읽기 쉽게 정리한 표 (ai_views.py 참고)
 AI_TABLES = ["Item", "Monster", "DropGroup", "Quest", "Reward"]
 
 TYPE_RANGE_TEXT = "int: -2,147,483,648 ~ 2,147,483,647 / long: 64비트 정수 / float: C# float(32비트) / bool: 0 또는 1"
@@ -82,8 +84,16 @@ def make_prompt(table, index_df, view):
 
 [판단 기준]
 - index 시트에 있는 공식은 대략적인 내용으로 +(-) 25% 이내의 수치는 무시(그것보다 큰 수치는 오류로 판단)
+    ㄴ 가격_중앙값대비%의 경우 15미만이거나 330초과 인경우 오류로 판단(해당 항목에 대하여 +- 25%는 적용하지 않음)
 - 이름, 설명 텍스트가 문제인 경우 'column' 영역에 이름 또는 설명으로 작성
 - 다른 행의 오류로 인해 문제가 발생된 것으로 판단되는 행은 보고하지 않고 원인이 되는 행만 보고
+- OO대비% 등의 계산을 제공한 경우 해당 데이터를 참조하여 판단
+- column에는 틀린 값이 실제로 들어 있는 칸을 적음 (오타가 이름에 있으면 이름)
+- 퀘스트 이름과 처치 대상이 맞지 않으면 이름을 오류로 보고
+- 한 항목에는 한 가지 문제만 적음. 한 행에 문제가 여러 개면 항목을 나눠서 보고
+
+[참고 통계]
+{summary_text(table, view)}
 
 [출력 형식]
 아래 JSON 배열로만 답해. 오류가 없으면 [] 로 답해.
