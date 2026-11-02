@@ -46,7 +46,7 @@ python step0_check_env.py
 3. 이 폴더의 `.env.example` 파일을 복사해 이름을 **`.env`** 로 변경
 4. `.env` 안의 `여기에_API_키를_붙여_넣으세요` 부분을 복사한 키로 교체
 
-> ⚠️ `.env`는 비밀번호와 같아요. GitHub에 올리지 마세요 (`.gitignore`에 이미 제외 처리됨).
+> `.env`는 GitHub에 올리지 않기. (`.gitignore`에 이미 제외 처리됨).
 
 ## 실행 순서
 
@@ -58,7 +58,3 @@ python step3_gemini_hello.py   # Gemini 연결 + AI가 Index 읽고 검증 포�
 ```
 
 - step3에서 모델 오류가 나면 화면에 나오는 **사용 가능한 모델 목록** 중 하나를 `.env`의 `GEMINI_MODEL`에 넣고 다시 실행.
-
-## 다음 단계 (1주차)
-
-step2에서 뽑은 규칙으로 실제 데이터를 검사하는 **규칙 기반 검증기** 만들기 → 정답표와 비교해 1차 탐지율 기록.
