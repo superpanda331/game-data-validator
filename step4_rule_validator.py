@@ -22,11 +22,8 @@ from common import CLEAN_DIR, ERROR_DIR, ROOT, TYPE_RANGES, load_all
 from rules import build_all_rules
 
 # ── 준비: 데이터와 규칙 읽기 ─────────────────────────────────────────
-folder = CLEAN_DIR if "--clean" in sys.argv else ERROR_DIR
-tables, indexes = load_all(folder)
-RULES = build_all_rules(indexes)      # 예: RULES["Item"]["grade"] → {"type": "enum", "allowed": [...]}
-
 errors = []                           # 찾은 오류를 여기에 모은다
+COLUMNS = ["table", "excel_row", "column", "error_type", "value", "message"]
 
 
 def add_error(table, row_idx, column, error_type, value, message):
@@ -76,8 +73,6 @@ def check_unique(table, df, col):
             add_error(table, i, col, "중복 값",v,f"{col} 값이 중복되어 있음")
 
 
-
-
 # ── 미션 3: 자료형 검사 ─────────────────────────────────────────────
 # 목표: 6건
 # 규칙:
@@ -103,8 +98,6 @@ def check_type(table, df, col, dtype):
 
         if not ok:
             add_error(table, i, col, "자료형과 일치하지 않는 값 사용",v,f"{col}에 자료형과 일치하지 않는 값 '{v}' 사용")            
-
-
 
 
 # ── 미션 4: 허용값(enum) 검사 ───────────────────────────────────────
@@ -153,7 +146,7 @@ def check_range(table, df, col, rule):
 #       rule.get("zero_means_none")이 True면 0은 "참조 없음"이라 정상 (예: 선행 퀘스트 없음)
 # 힌트: 참조 대상의 값 목록은  set(tables[ref_table][ref_col].dropna())  로 만들 수 있어요.
 #       set은 "중복 없는 값 모음"이고, 안에 있는지 찾는 속도가 아주 빨라요.
-def check_ref(table, df, col, rule): # 여기서 부터 수정 작업 필요
+def check_ref(table, df, col, rule, tables): # 여기서 부터 수정 작업 필요
     ref_table, ref_col = rule["ref"]
     valid = set(tables[ref_table][ref_col].dropna())
     
@@ -164,8 +157,6 @@ def check_ref(table, df, col, rule): # 여기서 부터 수정 작업 필요
             continue
         if v not in valid:
             add_error(table, i, col, "참조되지 않는 값 사용", v, f"{col}에 참조되지 않는 값 {v} 사용")
-
-            
 
 
 # ── 미션 7: 키 형식 검사 ────────────────────────────────────────────
@@ -202,32 +193,42 @@ def check_gte_col(table, df, col, rule):
 
 
 # ── 실행: 모든 테이블 × 모든 컬럼에 규칙 적용 (이미 완성) ──────────────
-for table, df in tables.items():
-    check_required(table, df)
-    for col, rule in RULES[table].items():
-        if rule.get("unique"):
-            check_unique(table, df, col)
-        check_type(table, df, col, rule["type"])
-        if "allowed" in rule:
-            check_allowed(table, df, col, rule["allowed"])
-        if "range" in rule or "min" in rule:
-            check_range(table, df, col, rule)
-        if "ref" in rule:
-            check_ref(table, df, col, rule)
-        if "format" in rule:
-            check_format(table, df, col, rule)
-        if "gte_col" in rule:
-            check_gte_col(table, df, col, rule)
+def validate_rules(tables, indexes):
+    errors.clear()
+    rules = build_all_rules(indexes)
+
+    for table, df in tables.items():
+        check_required(table, df)
+        for col, rule in rules[table].items():
+            if rule.get("unique"):
+                check_unique(table, df, col)
+            check_type(table, df, col, rule["type"])
+            if "allowed" in rule:
+                check_allowed(table, df, col, rule["allowed"])
+            if "range" in rule or "min" in rule:
+                check_range(table, df, col, rule)
+            if "ref" in rule:
+                check_ref(table, df, col, rule, tables)
+            if "format" in rule:
+                check_format(table, df, col, rule)
+            if "gte_col" in rule:
+                check_gte_col(table, df, col, rule)
+
+    return pd.DataFrame(errors, columns=COLUMNS)
 
 # ── 결과 출력과 저장 ─────────────────────────────────────────────────
-result = pd.DataFrame(errors, columns=["table", "excel_row", "column", "error_type", "value", "message"])
-print(f"검사 대상: {folder.name}")
-print(f"찾은 오류: {len(result)}건\n")
-if len(result):
-    print(result["error_type"].value_counts().to_string())
+if __name__ == "__main__" :
+    folder = CLEAN_DIR if "--clean" in sys.argv else ERROR_DIR
+    tables, indexes = load_all(folder)
+    result = validate_rules(tables, indexes)
 
-out_dir = ROOT / "output"
-out_dir.mkdir(exist_ok=True)
-out_name = "rule_result_clean.xlsx" if "--clean" in sys.argv else "rule_result.xlsx"
-result.to_excel(out_dir / out_name, index=False)
-print(f"\n저장: output/{out_name}")
+    print(f"검사 대상: {folder.name}")
+    print(f"찾은 오류: {len(result)}건\n")
+    if len(result):
+        print(result["error_type"].value_counts().to_string())
+
+    out_dir = ROOT / "output"
+    out_dir.mkdir(exist_ok=True)
+    out_name = "rule_result_clean.xlsx" if "--clean" in sys.argv else "rule_result.xlsx"
+    result.to_excel(out_dir / out_name, index=False)
+    print(f"\n저장: output/{out_name}")

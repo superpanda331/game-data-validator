@@ -31,17 +31,10 @@ from common import CLEAN_DIR, ERROR_DIR, ROOT, load_all
 from ai_calc import add_calc_columns, summary_text
 
 # ── 준비 ─────────────────────────────────────────────────────────────
-DRY_RUN = "--dry" in sys.argv
-CLEAN = "--clean" in sys.argv
-folder = CLEAN_DIR if CLEAN else ERROR_DIR
-
 load_dotenv(ROOT / ".env")
 MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
-client = None if DRY_RUN else genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-
-tables, indexes = load_all(folder)
-views = add_calc_columns(build_views(tables))                 # AI가 읽기 쉽게 정리한 표 (ai_views.py 참고)
 AI_TABLES = ["Item", "Monster", "DropGroup", "Quest", "Reward"]
+COLUMNS = ["table", "excel_row", "column", "error_type", "value", "message"]
 
 TYPE_RANGE_TEXT = "int: -2,147,483,648 ~ 2,147,483,647 / long: 64비트 정수 / float: C# float(32비트) / bool: 0 또는 1"
 
@@ -116,7 +109,7 @@ def make_prompt(table, index_df, view):
 #   reply.text 는 '[{"excel_row": 9, ...}]' 같은 글자예요.
 #   json.loads(글자) 를 하면 파이썬 리스트로 바뀌어요.
 #   AI가 형식을 어기면 json.loads에서 오류가 나요 → try / except 로 잡아서 빈 리스트 [] 를 돌려주세요.
-def ask_ai(prompt):
+def ask_ai(client, prompt):
     try:
         reply = client.models.generate_content(
             model=MODEL,
@@ -148,7 +141,7 @@ def ask_ai(prompt):
 #        키: "table", "excel_row", "column", "error_type"("AI 판단"), "value"(원래 값), "message"(reason)
 #        원래 값은 view에서 꺼내도 돼요:  view.loc[view["excel_row"] == excel_row, column].iloc[0]
 # 힌트: 숫자가 아닌 excel_row(예: "9행")가 올 수도 있어요. isinstance(excel_row, int) 로 먼저 확인!
-def check_ai_items(table, view, items):
+def check_ai_items(tables, table, view, items):
     found = []
     for item in items:
         excel_row = item.get("excel_row")
@@ -168,39 +161,58 @@ def check_ai_items(table, view, items):
     return found
 
 # ── 실행 (이미 완성) ─────────────────────────────────────────────────
-all_found = []
-for table in AI_TABLES:
-    prompt = make_prompt(table, indexes[table], views[table])
-    if DRY_RUN:
-        print(f"\n{'=' * 30} [{table}] 프롬프트 ({len(prompt)}자) {'=' * 30}\n{prompt}")
-        continue
-    print(f"[{table}] AI 검사 중...", end=" ", flush=True)
-    items = ask_ai(prompt)
-    found = check_ai_items(table, views[table], items)
-    print(f"AI 답 {len(items)}건 → 검증 통과 {len(found)}건")
-    all_found.extend(found)
-    time.sleep(2)                        # 무료 요금제 호출 제한을 피하려고 잠깐 쉬기
+def validate_ai(tables, indexes):
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise ValueError(".env 파일에 GEMINI_API_KEY가 없습니다.")
+    client = genai.Client(api_key=api_key)
+    views = add_calc_columns(build_views(tables))
 
-if DRY_RUN:
-    sys.exit()
+    all_found = []
+    for table in AI_TABLES:
+        prompt = make_prompt(table, indexes[table], views[table])
+        print(f"[{table}] AI 검사 중...", end=" ", flush=True)
+        items = ask_ai(client ,prompt)
+        found = check_ai_items(tables, table, views[table], items)
+        print(f"AI 답 {len(items)}건 → 검증 통과 {len(found)}건")
+        all_found.extend(found)
+        time.sleep(2)                        # 무료 요금제 호출 제한을 피하려고 잠깐 쉬기
+
+    ai_df = pd.DataFrame(all_found, columns=COLUMNS)
+    ai_df["source"] = "AI"
+    return ai_df
+
 
 # ── 저장: AI 결과 / 규칙 + AI 합친 결과 ──────────────────────────────
-cols = ["table", "excel_row", "column", "error_type", "value", "message"]
-out_dir = ROOT / "output"
-out_dir.mkdir(exist_ok=True)
-suffix = "_clean" if CLEAN else ""
+if __name__ == "__main__":
+    DRY_RUN = "--dry" in sys.argv
+    CLEAN = "--clean" in sys.argv
+    folder = CLEAN_DIR if CLEAN else ERROR_DIR
+    tables, indexes = load_all(folder)
 
-ai_df = pd.DataFrame(all_found, columns=cols)
-ai_df["source"] = "AI"
-ai_df.to_excel(out_dir / f"ai_result{suffix}.xlsx", index=False)
+    if DRY_RUN:
+        views = add_calc_columns(build_views(tables))
+        for table in AI_TABLES:
+            prompt = make_prompt(table, indexes[table], views[table])
+            print(f"\n{'=' * 30} [{table}] 프롬프트 ({len(prompt)}자) {'=' * 30}\n{prompt}")
+        sys.exit()
 
-rule_path = out_dir / f"rule_result{suffix}.xlsx"
-if rule_path.exists():
-    rule_df = pd.read_excel(rule_path)
-    rule_df["source"] = "규칙"
-    combined = pd.concat([rule_df, ai_df], ignore_index=True)
-    combined.to_excel(out_dir / f"combined_result{suffix}.xlsx", index=False)
-    print(f"\n규칙 {len(rule_df)}건 + AI {len(ai_df)}건 → output/combined_result{suffix}.xlsx")
-else:
-    print(f"\n⚠️ {rule_path.name}이 없어요. 먼저 step4_rule_validator.py{' --clean' if CLEAN else ''} 를 실행하세요.")
-print(f"AI 결과: output/ai_result{suffix}.xlsx")
+    ai_df = validate_ai(tables, indexes)
+
+    out_dir = ROOT / "output"
+    out_dir.mkdir(exist_ok=True)
+    suffix = "_clean" if CLEAN else ""
+
+
+    ai_df.to_excel(out_dir / f"ai_result{suffix}.xlsx", index=False)
+
+    rule_path = out_dir / f"rule_result{suffix}.xlsx"
+    if rule_path.exists():
+        rule_df = pd.read_excel(rule_path)
+        rule_df["source"] = "규칙"
+        combined = pd.concat([rule_df, ai_df], ignore_index=True)
+        combined.to_excel(out_dir / f"combined_result{suffix}.xlsx", index=False)
+        print(f"\n규칙 {len(rule_df)}건 + AI {len(ai_df)}건 → output/combined_result{suffix}.xlsx")
+    else:
+        print(f"\n⚠️ {rule_path.name}이 없어요. 먼저 step4_rule_validator.py{' --clean' if CLEAN else ''} 를 실행하세요.")
+    print(f"AI 결과: output/ai_result{suffix}.xlsx")
