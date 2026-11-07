@@ -5,6 +5,21 @@ from common import CLEAN_DIR, ERROR_DIR, load_all
 from step4_rule_validator import validate_rules
 from step5_ai_validator import validate_ai
 
+def join_unique(values):
+    texts = [str(v) for v in values if str(v) != ""]
+    return " / ".join(dict.fromkeys(texts))
+
+
+def merge_results(result):
+    return result.groupby(["table","excel_row"], as_index = False).agg(
+        column = ("column", join_unique),
+        error_type = ("error_type", join_unique),
+        value = ("value", join_unique),
+        message = ("message", join_unique),
+        source = ("source", join_unique)
+    )
+
+
 st.set_page_config(page_title="게임 데이터 검증 AI", layout="wide")
 st.title("게임 데이터 검증 AI")
 st.write("기획 데이터 테이블의 오류를 검증 코드 + AI로 찾는 툴입니다.")
@@ -31,7 +46,8 @@ if st.button("검증 시작", type="primary"):
                 st.error(str(e))
 
     result = pd.concat(results, ignore_index=True)
-    result["value"] = result["value"].fillna("").astype(str)   # 숫자·글자가 섞인 칸 → 글자로 통일
+    result = result.fillna("")   
+    result["value"] = result["value"].astype(str)   # 숫자·글자가 섞인 칸 → 글자로 통일
 
     st.session_state["result"] = result             # 미션 1: session_state에 "result"로 저장
     st.session_state["checked"] = choice             # 어떤 데이터를 검사했는지도 기억
@@ -41,9 +57,24 @@ if "result" in st.session_state:                                           # 미
     result = st.session_state["result"]
     st.subheader(f"검사 결과: {st.session_state['checked']}")
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("전체", len(result))
-    c2.metric("규칙", (result["source"] == "규칙").sum())                         # 미션 3: source가 "규칙"인 행 개수
-    c3.metric("AI", (result["source"] == "AI").sum())                           #         source가 "AI"인 행 개수
+    merged = merge_results(result)
+    merge = st.checkbox("같은 행 합쳐 보기", value=True)
+    shown = merged if merge else result
 
-    st.dataframe(result, hide_index=True)
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("오류 행", len(merged))
+    c2.metric("규칙", (result["source"] == "규칙").sum())
+    c3.metric("AI", (result["source"] == "AI").sum())
+    c4.metric("규칙·AI 둘 다", (merged["source"] == "규칙 / AI").sum())
+    
+    f1, f2 = st.columns(2)
+    sel_tables = f1.multiselect("테이블", sorted(shown["table"].unique()),placeholder="전체")
+    sel_sources = f2.multiselect("출처", sorted(shown["source"].unique()),placeholder="전체")
+
+    if sel_tables:
+        shown = shown[shown["table"].isin(sel_tables)]
+    if sel_sources:
+        shown = shown[shown["source"].isin(sel_sources)]
+
+    st.caption(f"{len(shown)}줄 표시 중")
+    st.dataframe(shown, hide_index=True)
