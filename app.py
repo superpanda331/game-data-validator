@@ -5,8 +5,10 @@ import tempfile
 
 from common import CLEAN_DIR, ERROR_DIR, load_all
 from step4_rule_validator import validate_rules
-from step5_ai_validator import validate_ai
 from pathlib import Path
+from rules import build_all_rules
+from step5_ai_validator import AI_TABLES, validate_ai
+
 
 def join_unique(values):
     texts = [str(v) for v in values if str(v) != ""]
@@ -28,13 +30,25 @@ def to_excel_bytes(df):
     df.to_excel(buffer, index=False)
     return buffer.getvalue()
 
-REQUIRED = ["DropGroup", "Item", "Monster", "Quest", "Reward", "StringTable"]
+def is_table_file(f):
+    """파일명과 같은 이름의 시트와 'Index' 시트가 모두 있으면 검사 대상 테이블."""
+    name = Path(f.name).stem
+    if name.startswith("~$"):                                   # 엑셀이 열려 있을 때 생기는 임시 파일
+        return False
+    try:
+        sheets = pd.ExcelFile(io.BytesIO(f.getvalue())).sheet_names
+    except Exception:                                          # 엑셀로 열리지 않는 파일
+        return False
+    return name in sheets and "Index" in sheets
+
 
 # 실제로 유저가 검증할 파일을 임시 폴더에 저장한뒤 해당 임시 폴더를 검증하는 방식으로 사용
 def load_uploaded(files):
+    # 업로드한 파일들을 임시 폴더에 저장한 뒤, 기존 load_all로 읽는다.
     with tempfile.TemporaryDirectory() as tmp:
         for f in files:
-            (Path(tmp) / f.name).write_bytes(f.getvalue())
+            file_name = Path(f.name).name                      # 앞의 폴더 경로 제거
+            (Path(tmp) / file_name).write_bytes(f.getvalue())
         return load_all(Path(tmp))
 
 st.set_page_config(page_title="게임 데이터 검증 AI", layout="wide")
@@ -49,9 +63,9 @@ uploaded = []
 
 if choice == "직접 업로드":
     uploaded = st.file_uploader(
-        "검증할 테이블 엑셀 파일을 전부 올려주세요",
+        "검증할 테이블 엑셀 파일이 있는 폴더를 선택해주세요.",
         type="xlsx",
-        accept_multiple_files=True,
+        accept_multiple_files="directory",
     )
 
 use_ai = st.checkbox("AI 검증 포함 (Gemini 5회 호출, 30초 정도 걸립니다.)")
@@ -59,15 +73,25 @@ use_ai = st.checkbox("AI 검증 포함 (Gemini 5회 호출, 30초 정도 걸립�
 # ── ① 버튼 블록: 눌렀을 때만 검증하고 결과를 저장 ──────────
 if st.button("검증 시작", type="primary"):
     if choice == "직접 업로드":
-        names = [Path(f.name).stem for f in uploaded]
-        missing = [t for t in REQUIRED if t not in names]
-        if missing:
-            st.error(f"다음 테이블이 필요합니다. ({', '.join(missing)})")
+        table_files = [f for f in uploaded if is_table_file(f)]
+        skipped = [Path(f.name).name for f in uploaded if not is_table_file(f)]
+        if skipped:
+            st.info(f"테이블 형식이 아니라서 건너뛴 파일: {', '.join(skipped)}")
+        if not table_files:
+            st.error("검사할 테이블이 없어요. (파일명과 같은 시트 + Index 시트가 필요해요)")
             st.stop()
+
         try:
-            tables, indexes = load_uploaded(uploaded)
+            tables, indexes = load_uploaded(table_files)
         except Exception as e:
-            st.error(f"파일을 읽지 못했습니다. 시트 이름과 인덱스 시트를 확인해주세요. ({e})")
+            st.error(f"파일을 읽지 못했어요. ({e})")
+            st.stop()
+
+        rules = build_all_rules(indexes)
+        referenced = {rule["ref"][0] for cols in rules.values() for rule in cols.values() if "ref" in rule}
+        missing = sorted(referenced - set(tables))                                        # 미션: 참조되는데 업로드되지 않은 테이블
+        if missing:
+            st.error(f"다른 테이블이 참조하는 테이블이 없어요: {', '.join(missing)}")
             st.stop()
     else:
         tables, indexes = load_all(folder)
@@ -77,12 +101,18 @@ if st.button("검증 시작", type="primary"):
         rule_df["source"] = "규칙"
     results = [rule_df]
 
+    st.session_state["ai_failed"] = []
     if use_ai:
-        with st.spinner("AI 검증 중... (30초 정도 소요됩니다.)"):
-            try:
-                results.append(validate_ai(tables, indexes))
-            except ValueError as e:              # API 키가 없을 때 (3-2에서 만든 메시지)
-                st.error(str(e))
+        if not all(t in tables for t in AI_TABLES + ["StringTable"]):
+            st.warning("AI 검증은 아직 샘플 테이블 구조만 지원해요. 규칙 검증 결과만 보여 드릴게요.")
+        else:
+            with st.spinner("AI 검증 중... (30초 정도 소요됩니다.)"):
+                try:
+                    ai_df, failed = validate_ai(tables, indexes)
+                    results.append(ai_df)
+                    st.session_state["ai_failed"] = failed
+                except ValueError as e:              # API 키가 없을 때 (3-2에서 만든 메시지)
+                    st.error(str(e))
 
     result = pd.concat(results, ignore_index=True)
     result = result.fillna("")   
@@ -95,6 +125,12 @@ if st.button("검증 시작", type="primary"):
 if "result" in st.session_state:                                           # 미션 2: 저장된 결과가 있는지 확인
     result = st.session_state["result"]
     st.subheader(f"검사 결과: {st.session_state['checked']}")
+    failed = st.session_state.get("ai_failed", [])
+    if failed:
+        st.warning(
+            f"AI 검사에 실패한 테이블: {', '.join(failed)}\n\n"
+            "이 테이블은 규칙 검증 결과만 포함돼 있습니다. 잠시 후 다시 시도바랍니다."
+        )
 
     merged = merge_results(result)
     merge = st.checkbox("같은 행 합쳐 보기", value=True)

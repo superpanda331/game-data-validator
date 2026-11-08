@@ -119,11 +119,15 @@ def ask_ai(client, prompt):
                 temperature=0,                           # 매번 최대한 같은 답 (재현성)
             ),
         )
+        items = json.loads(reply.text)
+        if not isinstance(items, list):
+            print("\n Ai 처리 실패 : 목록 형식이 아님")
+            return None
         # print(reply.text)
-        return json.loads(reply.text)
+        return items
     except Exception as e:
         print(f"\n Ai 처리 실패 : {e}")
-        return []
+        return None
 
     
 
@@ -165,14 +169,21 @@ def validate_ai(tables, indexes):
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         raise ValueError(".env 파일에 GEMINI_API_KEY가 없습니다.")
-    client = genai.Client(api_key=api_key)
+    client = genai.Client(
+        api_key=api_key,
+        http_options=types.HttpOptions(timeout=60_000),   # 60초 (단위: 밀리초)
+    )
     views = add_calc_columns(build_views(tables))
 
     all_found = []
+    failed = []                                              # 실패한 테이블 이름
     for table in AI_TABLES:
         prompt = make_prompt(table, indexes[table], views[table])
         print(f"[{table}] AI 검사 중...", end=" ", flush=True)
         items = ask_ai(client ,prompt)
+        if items is None:
+            failed.append(table)
+            continue
         found = check_ai_items(tables, table, views[table], items)
         print(f"AI 답 {len(items)}건 → 검증 통과 {len(found)}건")
         all_found.extend(found)
@@ -180,7 +191,7 @@ def validate_ai(tables, indexes):
 
     ai_df = pd.DataFrame(all_found, columns=COLUMNS)
     ai_df["source"] = "AI"
-    return ai_df
+    return ai_df, failed
 
 
 # ── 저장: AI 결과 / 규칙 + AI 합친 결과 ──────────────────────────────
@@ -197,7 +208,9 @@ if __name__ == "__main__":
             print(f"\n{'=' * 30} [{table}] 프롬프트 ({len(prompt)}자) {'=' * 30}\n{prompt}")
         sys.exit()
 
-    ai_df = validate_ai(tables, indexes)
+    ai_df, failed = validate_ai(tables, indexes)
+    if failed:
+        print(f"\n⚠️ AI 검사 실패: {', '.join(failed)}")
 
     out_dir = ROOT / "output"
     out_dir.mkdir(exist_ok=True)
