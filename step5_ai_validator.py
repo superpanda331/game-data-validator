@@ -165,10 +165,10 @@ def check_ai_items(tables, table, view, items):
     return found
 
 # ── 실행 (이미 완성) ─────────────────────────────────────────────────
-def validate_ai(tables, indexes):
-    api_key = os.getenv("GEMINI_API_KEY")
+def validate_ai(tables, indexes, api_key=None):
+    api_key = api_key or os.getenv("GEMINI_API_KEY")
     if not api_key:
-        raise ValueError(".env 파일에 GEMINI_API_KEY가 없습니다.")
+        raise ValueError("Gemini API 키가 없습니다. 화면에 키를 입력바랍니다.")
     client = genai.Client(
         api_key=api_key,
         http_options=types.HttpOptions(timeout=60_000),   # 60초 (단위: 밀리초)

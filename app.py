@@ -70,6 +70,14 @@ if choice == "직접 업로드":
 
 use_ai = st.checkbox("AI 검증 포함 (Gemini 5회 호출, 30초 정도 걸립니다.)")
 
+api_key = ""
+if use_ai:
+    api_key = st.text_input(
+        "Gemini 키",
+        type="password",
+        help="Google AI Studio에서 무료로 발급받을 수 있습니다. 입력한 키는 저장되지 않고 이번 검사에만 쓰입니다.",
+    )
+
 # ── ① 버튼 블록: 눌렀을 때만 검증하고 결과를 저장 ──────────
 if st.button("검증 시작", type="primary"):
     if choice == "직접 업로드":
@@ -108,7 +116,7 @@ if st.button("검증 시작", type="primary"):
         else:
             with st.spinner("AI 검증 중... (30초 정도 소요됩니다.)"):
                 try:
-                    ai_df, failed = validate_ai(tables, indexes)
+                    ai_df, failed = validate_ai(tables, indexes, api_key)
                     results.append(ai_df)
                     st.session_state["ai_failed"] = failed
                 except ValueError as e:              # API 키가 없을 때 (3-2에서 만든 메시지)
