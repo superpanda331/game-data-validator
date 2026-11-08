@@ -191,6 +191,23 @@ def check_gte_col(table, df, col, rule):
                 add_error(table, i, col, "최소 값 데이터보다 최대 값 데이터에 더 작은 값 사용", v, f"{col}에 최소 값 {df.at[i, rule_col]}보다 작은 최대 값 {v} 사용")
 
 
+# ── 미션 9: 조건부 값 검사 ──────────────────────────────────────────
+# 목표: 2건 (Item 58행 max_stack, Item 68행 max_stack)
+# 규칙: rule["cond"] = ("type", {"무기": 1, "방어구": 1, "소모품": 99, "재료": 999})
+#       같은 행의 type 값을 보고, 사전에서 정답을 찾아 이 칸 값과 같은지 확인
+# 힌트: - 같은 행의 다른 칸 값은 df.at[i, 칸이름]  (미션 7에서 써 봤어요)
+#       - 사전에 없는 기준값(예: type이 "레어"처럼 잘못된 값)이면 건너뛰기  →  not in
+#       - 숫자가 아닌 값은 미션 3에서 잡으니 건너뛰기  →  isinstance
+def check_cond(table, df, col, rule):
+    cond_col, values = rule["cond"]
+    for i, v in df[col].items():
+        key = df.at[i, cond_col]
+        if not isinstance(v,(int, float)) or key not in values:
+            continue
+        expected = values[key]
+        if v != expected:
+            add_error(table, i, col, "조건에 맞지 않는 값", v, f"{cond_col}이 {key}인 경우 {col}은 {expected} 이여야 함")
+
 
 # ── 실행: 모든 테이블 × 모든 컬럼에 규칙 적용 (이미 완성) ──────────────
 def validate_rules(tables, indexes):
@@ -213,6 +230,8 @@ def validate_rules(tables, indexes):
                 check_format(table, df, col, rule)
             if "gte_col" in rule:
                 check_gte_col(table, df, col, rule)
+            if "cond" in rule:
+                check_cond(table, df, col, rule)
 
     return pd.DataFrame(errors, columns=COLUMNS)
 
