@@ -86,7 +86,7 @@ if st.button("검증 시작", type="primary"):
         if skipped:
             st.info(f"테이블 형식이 아니라서 건너뛴 파일: {', '.join(skipped)}")
         if not table_files:
-            st.error("검사할 테이블이 없어요. (파일명과 같은 시트 + Index 시트가 필요해요)")
+            st.error("검사할 테이블이 없습니다. (파일명과 같은 시트 + Index 시트가 필요합니다.)")
             st.stop()
 
         try:
@@ -112,7 +112,7 @@ if st.button("검증 시작", type="primary"):
     st.session_state["ai_failed"] = []
     if use_ai:
         if not all(t in tables for t in AI_TABLES + ["StringTable"]):
-            st.warning("AI 검증은 아직 샘플 테이블 구조만 지원해요. 규칙 검증 결과만 보여 드릴게요.")
+            st.warning("AI 검증은 아직 샘플 테이블 구조만 지원합니다. 규칙 검증 결과만 출력하겠습니다.")
         else:
             with st.spinner("AI 검증 중... (30초 정도 소요됩니다.)"):
                 try:
