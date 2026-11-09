@@ -2,6 +2,7 @@ import pandas as pd
 import streamlit as st
 import io
 import tempfile
+import zipfile
 
 from common import CLEAN_DIR, ERROR_DIR, load_all
 from step4_rule_validator import validate_rules
@@ -9,6 +10,32 @@ from pathlib import Path
 from rules import build_all_rules
 from step5_ai_validator import AI_TABLES, validate_ai
 
+
+TABLE_GUIDE = """
+[파일 구성]
+- 파일 하나 = 테이블 하나. '파일명과 데이터 시트 이름이 동일해야' 합니다. (예: `Item.xlsx` → `Item` 시트)
+- 같은 파일에 **`Index` 시트**가 있어야합니다. 첫 줄 제목은 `컬럼명` / `자료형` / `용도`
+- Index는 **첫 빈 행까지만** 읽습니다. 아래에 메모를 쓰려면 한 줄 비우고 써주셔야 합니다.
+
+**자료형** (6가지): `int` · `long` · `float` · `bool` · `string` · `enum`
+
+**용도 칸에서 규칙으로 읽는 표현**
+
+| 용도에 쓴 표현 | 검사 내용 |
+|---|---|
+| `PK` 또는 `중복 불가` | 중복 값 |
+| `허용값: 일반 / 고급 / 희귀` | 목록에 없는 값 |
+| `범위 1~60` | 범위 밖의 값 |
+| `0 이상`, `양의 정수` | 최솟값 |
+| `0 초과 1 이하` | 0은 안 되고 1까지 |
+| `FK → Item.item_id` 또는 `참조 테이블 → Item.item_id` | 다른 테이블에 없는 값 |
+| `없으면 0` | 0은 "참조 없음"으로 허용 |
+| `형식: ITEM_NAME_{item_id}` | 같은 행 ID와 맞지 않는 키 |
+| `min_count 이상` (다른 칸 이름) | 다른 칸보다 작은 값 |
+| `무기·방어구 1, 소모품 99` (허용값 + 숫자) | 다른 칸 값에 따라 정해진 값 |
+
+위 표현이 없는 문장은 규칙으로 읽지 않습니다. 그런 내용은 AI 검증이 판단합니다. (현재 AI는 샘플 테이블 구조만 지원).
+"""
 
 def join_unique(values):
     texts = [str(v) for v in values if str(v) != ""]
@@ -28,6 +55,17 @@ def merge_results(result):
 def to_excel_bytes(df):
     buffer = io.BytesIO()
     df.to_excel(buffer, index=False)
+    return buffer.getvalue()
+
+def make_sample_zip(folder):
+    # 샘플 폴더 내부의 엑셀 파일을 zip으로 묶어서 byte 형식으로 돌려준다.
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as zf:
+        for path in sorted(folder.glob("*.xlsx")):
+            if path.name.startswith("~$"):
+                continue
+            zf.write(path, arcname=path.name)
+
     return buffer.getvalue()
 
 def is_table_file(f):
@@ -55,6 +93,7 @@ st.set_page_config(page_title="게임 데이터 검증 AI", layout="wide")
 st.title("게임 데이터 검증 AI")
 st.write("기획 데이터 테이블의 오류를 검증 코드 + AI로 찾는 툴입니다.")
 
+
 # ── 입력 ─────────────────────────────────────────────
 choice = st.radio("검사할 데이터", ["오류 데이터 (샘플)", "정상 데이터 (샘플)", "직접 업로드"])
 folder = ERROR_DIR if choice.startswith("오류") else CLEAN_DIR
@@ -62,6 +101,16 @@ folder = ERROR_DIR if choice.startswith("오류") else CLEAN_DIR
 uploaded = []
 
 if choice == "직접 업로드":
+    with st.expander("테이블 작성 규칙 보기"):
+        st.markdown(TABLE_GUIDE)
+
+    st.download_button(
+        "샘플 테이블 다운로드 (오류 데이터, zip)",
+        data=make_sample_zip(ERROR_DIR),
+        file_name="sample_tables.zip",
+        mime="application/zip",
+    )
+    
     uploaded = st.file_uploader(
         "검증할 테이블 엑셀 파일이 있는 폴더를 선택해주세요.",
         type="xlsx",
