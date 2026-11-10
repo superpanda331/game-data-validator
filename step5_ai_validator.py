@@ -11,8 +11,10 @@
     python evaluate.py output/combined_result.xlsx     # 규칙 + AI 합친 결과
     python evaluate.py output/ai_result.xlsx           # AI 결과만
 
-진행 방법:
-    미션 1 → --dry 로 프롬프트 확인 → 미션 2 → 미션 3 → 실행 → 채점 → 미션 4(프롬프트 개선) 반복
+학습 과정:
+    - 2주차: 미션 1~3을 직접 구현 → --dry 로 프롬프트 확인 → 실행·채점 → 프롬프트 개선 (1~7차 실험)
+    - 3주차: 웹 화면에서 부를 수 있도록 validate_ai() 함수로 분리
+    - 배포 준비: 호출 실패 처리, 60초 타임아웃, 화면에서 API 키 입력
 """
 import json
 import os
@@ -39,21 +41,10 @@ COLUMNS = ["table", "excel_row", "column", "error_type", "value", "message"]
 TYPE_RANGE_TEXT = "int: -2,147,483,648 ~ 2,147,483,647 / long: 64비트 정수 / float: C# float(32비트) / bool: 0 또는 1"
 
 
-# ── 미션 1: 프롬프트 만들기 ───────────────────────────────────────────
-# 목표: AI에게 보낼 질문(문자열)을 만든다.
-# 재료:
-#   index_df : 이 테이블의 Index 시트 (컬럼명 / 자료형 / 용도)
-#   view     : AI용 표 (excel_row 칸이 맨 앞에 있음)
-# 프롬프트에 들어가야 할 것 (순서대로):
-#   ① 역할:   "너는 게임 기획 데이터 검증 담당자야" 같은 한 줄
-#   ② 명세:   Index 내용  → step3에서 만든 방식 그대로: "- 컬럼명 (자료형): 용도" 줄들
-#   ③ 데이터: view 내용  → view.to_csv(index=False) 하면 표가 CSV 글자로 바뀌어요
-#   ④ 요청:   무엇을 찾아야 하는지 (같은 등급·레벨대 다른 행과 비교해 튀는 값, 이름·설명이 맞지 않는 것, 오타 등)
-#   ⑤ 출력 형식: 반드시 아래 JSON 배열로만 답하게 하기
-#       [{"excel_row": 숫자, "column": "컬럼명", "reason": "이유"}]
-#       오류가 없으면 []
-# 힌트: 여러 줄 문자열은 f\"\"\" ... \"\"\" 로 쓰고, 안에 {변수}를 넣을 수 있어요.
-#       TYPE_RANGE_TEXT도 명세에 같이 넣어 주면 좋아요.
+# ── 미션 1: 프롬프트 만들기 ──────────────────────────────────────
+# 역할 → 자료형 범위 → 컬럼 명세(Index) → 데이터(CSV) → 찾아야 할 것 → 판단 기준 → 참고 통계 → 출력 형식(JSON)
+# 학습 포인트: 여러 줄 f-string, JSON 예시의 중괄호는 {{ }} 로 써야 함
+#             [판단 기준]은 실험 결과(오탐·놓친 오류)를 보며 한 줄씩 추가함
 def make_prompt(table, index_df, view):
     spec_text = "\n".join(f"- {r.컬럼명} ({r.자료형}): {r.용도}" for r in index_df.itertuples())
     data_text = view.to_csv(index=False,lineterminator="\n")
@@ -95,20 +86,10 @@ def make_prompt(table, index_df, view):
     return prompt
 
 
-# ── 미션 2: AI 호출하고 JSON 읽기 ────────────────────────────────────
-# 목표: prompt를 보내고, 돌아온 JSON 글자를 파이썬 리스트로 바꿔서 돌려준다.
-# 힌트:
-#   reply = client.models.generate_content(
-#       model=MODEL,
-#       contents=prompt,
-#       config=types.GenerateContentConfig(
-#           response_mime_type="application/json",   # "JSON으로만 답해" 강제
-#           temperature=0,                           # 매번 최대한 같은 답 (재현성)
-#       ),
-#   )
-#   reply.text 는 '[{"excel_row": 9, ...}]' 같은 글자예요.
-#   json.loads(글자) 를 하면 파이썬 리스트로 바뀌어요.
-#   AI가 형식을 어기면 json.loads에서 오류가 나요 → try / except 로 잡아서 빈 리스트 [] 를 돌려주세요.
+# ── 미션 2: AI 호출하고 JSON 읽기 ────────────────────────
+# JSON 형식으로만 답하게 하고(temperature=0), 답을 파이썬 리스트로 바꿔 돌려준다.
+# 학습 포인트: json.loads, try/except로 실패 처리
+#             실패하면 None을 돌려줌 — []("오류 없음")와 구분해야 실패한 테이블을 화면에 알릴 수 있음
 def ask_ai(client, prompt):
     try:
         reply = client.models.generate_content(
@@ -132,19 +113,10 @@ def ask_ai(client, prompt):
     
 
 
-# ── 미션 3: AI 답 검증하기 ────────────────────────────────────────────
-# 목표: AI가 준 항목 중 '말이 되는 것'만 골라 결과 목록(found)에 담는다.
-#       AI는 가끔 없는 행 번호나 없는 컬럼을 지어내요. 그대로 믿으면 안 돼요!
-# 할 일 (항목 item 하나마다):
-#   ① item에서 excel_row, column, reason 꺼내기   (item.get("excel_row") 처럼)
-#   ② excel_row가 view["excel_row"] 안에 있는 숫자인지 확인 → 아니면 건너뛰기
-#   ③ column이 view.columns 안에 있는지 확인          → 아니면 건너뛰기
-#   ④ to_source(tables, table, excel_row, column) 으로 원본 위치로 바꾸기
-#        (뷰의 '이름'·'설명' 칸은 실제로 StringTable에 있으니까요)
-#   ⑤ found.append({...}) 로 저장
-#        키: "table", "excel_row", "column", "error_type"("AI 판단"), "value"(원래 값), "message"(reason)
-#        원래 값은 view에서 꺼내도 돼요:  view.loc[view["excel_row"] == excel_row, column].iloc[0]
-# 힌트: 숫자가 아닌 excel_row(예: "9행")가 올 수도 있어요. isinstance(excel_row, int) 로 먼저 확인!
+# ── 미션 3: AI 답 검증하기 ────────────────────────────────────
+# AI가 없는 행 번호나 없는 컬럼을 답하는 경우가 있어서, 실제로 있는 것만 채택한다.
+# 이름·설명 칸은 to_source()로 실제 텍스트가 있는 StringTable 위치로 바꿔서 기록한다.
+# 학습 포인트: Series에 in을 쓰면 값이 아니라 인덱스를 확인함 → set(...)으로 바꿔서 확인
 def check_ai_items(tables, table, view, items):
     found = []
     for item in items:
@@ -164,7 +136,9 @@ def check_ai_items(tables, table, view, items):
         found.append({"table" : src_table, "excel_row" : src_row, "column" : src_col, "error_type" : "AI 판단", "value" : value, "message" : reason})
     return found
 
-# ── 실행 (이미 완성) ─────────────────────────────────────────────────
+# ── 실행 ──────────────────────────────────────────────────────────────
+# 3주차: 웹 화면에서 부를 수 있도록 함수로 분리
+# 학습 포인트: 화면에서 입력한 키를 먼저 쓰고, 없으면 .env 키 사용 (api_key or os.getenv(...))
 def validate_ai(tables, indexes, api_key=None):
     api_key = api_key or os.getenv("GEMINI_API_KEY")
     if not api_key:
@@ -194,7 +168,7 @@ def validate_ai(tables, indexes, api_key=None):
     return ai_df, failed
 
 
-# ── 저장: AI 결과 / 규칙 + AI 합친 결과 ──────────────────────────────
+# ── 터미널에서 직접 실행할 때만: AI 결과 / 규칙 + AI 합친 결과 저장 ────
 if __name__ == "__main__":
     DRY_RUN = "--dry" in sys.argv
     CLEAN = "--clean" in sys.argv

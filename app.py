@@ -146,7 +146,7 @@ if st.button("검증 시작", type="primary"):
 
         rules = build_all_rules(indexes)
         referenced = {rule["ref"][0] for cols in rules.values() for rule in cols.values() if "ref" in rule}
-        missing = sorted(referenced - set(tables))                                        # 미션: 참조되는데 업로드되지 않은 테이블
+        missing = sorted(referenced - set(tables))  # 미션: 참조되는데 업로드되지 않은 테이블 (집합 빼기)
         if missing:
             st.error(f"다른 테이블이 참조하는 테이블이 없어요: {', '.join(missing)}")
             st.stop()
@@ -168,18 +168,18 @@ if st.button("검증 시작", type="primary"):
                     ai_df, failed = validate_ai(tables, indexes, api_key)
                     results.append(ai_df)
                     st.session_state["ai_failed"] = failed
-                except ValueError as e:              # API 키가 없을 때 (3-2에서 만든 메시지)
+                except ValueError as e:              # API 키가 없을 때 (step5의 ValueError 메시지)
                     st.error(str(e))
 
     result = pd.concat(results, ignore_index=True)
     result = result.fillna("")   
     result["value"] = result["value"].astype(str)   # 숫자·글자가 섞인 칸 → 글자로 통일
 
-    st.session_state["result"] = result             # 미션 1: session_state에 "result"로 저장
+    st.session_state["result"] = result  # 미션: 다시 실행돼도 결과가 유지되도록 session_state에 저장
     st.session_state["checked"] = choice             # 어떤 데이터를 검사했는지도 기억
 
 # ── ② 결과 블록: 매번 실행, 저장된 결과가 있으면 표시 ──────
-if "result" in st.session_state:                                           # 미션 2: 저장된 결과가 있는지 확인
+if "result" in st.session_state:  # 미션: 저장된 결과가 있으면 표시 (클릭할 때마다 화면 전체가 다시 실행되기 때문)
     result = st.session_state["result"]
     st.subheader(f"검사 결과: {st.session_state['checked']}")
     failed = st.session_state.get("ai_failed", [])
